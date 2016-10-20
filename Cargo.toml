@@ -1,0 +1,16 @@
+[package]
+name = "dylib_fun"
+version = "0.1.0"
+authors = ["Alex McArther <acmcarther@gmail.com>"]
+
+build = "tango-build.rs"
+
+[build-dependencies]
+tango = "0.5.0"
+
+[dependencies]
+specs = "0.7.0"
+libloading = "0.3.1"
+
+[lib]
+name = "dylib_fun"

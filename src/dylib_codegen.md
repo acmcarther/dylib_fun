@@ -5,20 +5,26 @@ This is a module to generate dylib systems and components (into tmp), cmpile the
 
 It should be great fun!
 
-
 ## First, lets grab what we need
 ```rust
+use std::fs;
 use std::fs::File;
 use std::io::Write;
 use tempdir::TempDir;
 use std::path::Path;
+use std::io;
 use std::path::PathBuf;
 use std::collections::HashMap;
+use std::process::Command;
 use libloading::Library;
 ```
 ## Overview of the problem
 
-So what we'd like to be able to do is generate entire crates that we can build and link as dynamic libraries. We'll need some core abstractions:
+So what we'd like to be able to do is generate entire crates that we can build and link as dynamic libraries.
+
+## Implementation
+
+We'll need some core abstractions:
 - Some kind of crate type
 - Maybe a kind of "crate builder" type
 
@@ -42,7 +48,7 @@ impl Crate {
 ```
   First, the dylib-yielding method itself:
 
-  We're going to employ `libloading` here, with the path provided, to open that new crate up! We're also going to hand wave the crate-path to dylib path part for now, as `get_lib_path`.
+  We're going to employ `libloading` here, with the path provided, to open that new crate up! We're also going to hand wave the crate-path to dylib path part for now, as `lib_path`.
 ```rust
   pub fn as_live_dylib(&self) -> Library {
     Library::new(self.lib_path()).unwrap()
@@ -53,17 +59,17 @@ impl Crate {
   I happen to know the exact location of our generated dylib (or rather, I do after guessing and checking.
 ```rust
   pub fn lib_path(&self) -> PathBuf {
-    let dylib_name = format!("lib{}_lib.so", self.name);
+    let underscored_path = self.name.replace('-', "_");
+    let dylib_name = format!("lib{}.so", underscored_path);
     self.directory.path().join("target/debug").join(dylib_name)
   }
-```
-  And thats all there is to our struct!
-
-  Take special notice that we're not providing any sort of `new` method. We're leaving that work to our `CrateBuilder` type.
-
-```rust
 }
 ```
+
+And thats all there is to our struct!
+
+Take special notice that we're not providing any sort of `new` method. We're leaving that work to our `CrateBuilder` type.
+
 Lets now talk about how we're going to build a crate.
 
 A crate needs two things: a `Cargo.toml`, and some source code. For our purposes, lets only support having a single `lib.rs` source file.
@@ -127,40 +133,96 @@ impl CrateBuilder {
 ```
   And, for the grand finale, lets let them build their crate. This is a big job, so we'll employ some helper functions.
 
-  We're going to implement this in a very fault-intolerant way for now.
 ```rust
-  pub fn build_crate(self) -> Crate {
-    let crate_directory = CrateBuilder::generate_directory(&self.crate_name);
-    CrateBuilder::generate_toml(&crate_directory, &self.crate_name, self.dependencies);
-    CrateBuilder::generate_lib_rs(&crate_directory, self.source_code);
-    CrateBuilder::compile_crate(&crate_directory);
+  pub fn build(self) -> Result<Crate, BuildErr> {
+    let dir = try!(CrateBuilder::generate_directory(&self.crate_name));
+    try!(CrateBuilder::generate_toml(&dir, &self.crate_name, self.dependencies));
+    try!(CrateBuilder::generate_lib_rs(&dir, self.source_code));
+    try!(CrateBuilder::compile_crate(&dir));
 
-    Crate {
+    Ok(Crate {
       name: self.crate_name,
-      directory: crate_directory
-    }
+      directory: dir
+    })
   }
 ```
   And, here comes the dirty work.
 
 ```rust
-  fn generate_directory(crate_name: &str) -> TempDir {
-    TempDir::new(crate_name).unwrap()
+  fn generate_directory(crate_name: &str) -> Result<TempDir, BuildErr> {
+    TempDir::new(crate_name).map_err(|err| BuildErr::DirErr(err))
   }
 
-  fn generate_toml(directory: &TempDir, crate_name: &String, dependencies: HashMap<Dependency, Version>) {
-    // TODO:
+  fn generate_toml(directory: &TempDir, crate_name: &String, dependencies: HashMap<Dependency, Version>) -> Result<(), BuildErr> {
+    let deps: String = dependencies.iter()
+      .map(|(k, v)| format!("\"{}\" = \"{}\"\n", k, v))
+      .collect();
+    File::create(directory.path().join("Cargo.toml"))
+      .and_then(|mut f| f.write_all(format!("
+        [package]
+        name = \"{}\"
+        version = \"0.0.1\"
+
+        [dependencies]
+        {}
+
+        [lib]
+        crate-type = [\"cdylib\"]
+      ", crate_name, deps).as_bytes()))
+      .map_err(BuildErr::TomlErr)
   }
 
-  fn generate_lib_rs(directory: &TempDir, source_code: String) {
-    // TODO:
+  fn generate_lib_rs(directory: &TempDir, source_code: String) -> Result<(), BuildErr> {
+    fs::create_dir(directory.path().join("src/"))
+      .and_then(|_| File::create(directory.path().join("src/lib.rs")))
+      .and_then(|mut f| f.write_all(source_code.as_bytes()))
+      .map_err(BuildErr::SrcErr)
   }
 
-  fn compile_crate(directory: &TempDir) {
-    // TODO:
+  fn compile_crate(directory: &TempDir) -> Result<(), BuildErr> {
+  Command::new("cargo")
+    .arg("build")
+    .current_dir(directory)
+    .output()
+    .map(|_| ())
+    .map_err(BuildErr::CompileErr)
   }
 ```
   And thats all there is to a `CrateBuilder`!
 ```rust
+}
+```
+
+We used that fancy `BuildErr` type up above, lets quickly enumerate it
+
+```rust
+#[derive(Debug)]
+pub enum BuildErr {
+ DirErr(io::Error),
+ TomlErr(io::Error),
+ SrcErr(io::Error),
+ CompileErr(io::Error)
+}
+```
+
+And, now lets test
+
+```rust
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn can_create_trivial_crate() {
+    let cb = CrateBuilder::new("test_crate".to_owned());
+    let krate = cb.build().unwrap();
+  }
+
+  #[test]
+  fn can_link_trivial_crate() {
+    let cb = CrateBuilder::new("test_crate".to_owned());
+    let krate = cb.build().unwrap();
+    krate.as_live_dylib();
+  }
 }
 ```

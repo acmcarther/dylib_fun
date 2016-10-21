@@ -150,7 +150,7 @@ impl CrateBuilder {
 
 ```rust
   fn generate_directory(crate_name: &str) -> Result<TempDir, BuildErr> {
-    TempDir::new(crate_name).map_err(|err| BuildErr::DirErr(err))
+    TempDir::new(crate_name).map_err(BuildErr::DirErr)
   }
 
   fn generate_toml(directory: &TempDir, crate_name: &String, dependencies: HashMap<Dependency, Version>) -> Result<(), BuildErr> {
@@ -215,12 +215,34 @@ mod tests {
   #[test]
   fn can_create_trivial_crate() {
     let cb = CrateBuilder::new("test_crate".to_owned());
-    let krate = cb.build().unwrap();
+    cb.build().unwrap();
   }
 
   #[test]
   fn can_link_trivial_crate() {
     let cb = CrateBuilder::new("test_crate".to_owned());
+    let krate = cb.build().unwrap();
+    krate.as_live_dylib();
+  }
+
+  #[test]
+  fn can_link_a_real_function() {
+    let mut cb = CrateBuilder::new("test_crate_w_function".to_owned());
+    cb.set_source_code(r#"
+      #[no_mangle]
+      pub fn return_three() -> i32 { 3 }
+    "#.to_owned());
+    let krate = cb.build().unwrap();
+    let lib = krate.as_live_dylib();
+    let fun = unsafe { lib.get::<fn() -> i32>(b"return_three").unwrap() };
+    assert_eq!(fun(), 3);
+  }
+
+  #[test]
+  fn can_trivially_add_dependencies() {
+    let mut cb = CrateBuilder::new("test_crate_w_dep".to_owned());
+    cb.add_dependency("log".to_owned(), "0.3.6".to_owned());
+    cb.set_source_code("extern crate log;".to_owned());
     let krate = cb.build().unwrap();
     krate.as_live_dylib();
   }

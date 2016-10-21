@@ -63,6 +63,15 @@ impl Crate {
     let dylib_name = format!("lib{}.so", underscored_path);
     self.directory.path().join("target/debug").join(dylib_name)
   }
+```
+
+  We'll probably also want to be able to recompile the crate with a new source, so lets add that. We're going to leverage some helper functionss that we'll write later for the `CrateBuilder`
+```rust
+  pub fn recompiled_with_source(self, new_source: String) -> Result<Crate, BuildErr> {
+    write_lib_rs(&self.directory, new_source)
+      .and_then(|_| compile_crate(&self.directory))
+      .map(|_| self)
+  }
 }
 ```
 
@@ -135,61 +144,64 @@ impl CrateBuilder {
 
 ```rust
   pub fn build(self) -> Result<Crate, BuildErr> {
-    let dir = try!(CrateBuilder::generate_directory(&self.crate_name));
-    try!(CrateBuilder::generate_toml(&dir, &self.crate_name, self.dependencies));
-    try!(CrateBuilder::generate_lib_rs(&dir, self.source_code));
-    try!(CrateBuilder::compile_crate(&dir));
+    let dir = try!(generate_directory(&self.crate_name));
+    try!(generate_toml(&dir, &self.crate_name, self.dependencies));
+    try!(generate_lib_rs(&dir, self.source_code));
+    try!(compile_crate(&dir));
 
     Ok(Crate {
       name: self.crate_name,
       directory: dir
     })
   }
+}
 ```
   And, here comes the dirty work.
 
 ```rust
-  fn generate_directory(crate_name: &str) -> Result<TempDir, BuildErr> {
-    TempDir::new(crate_name).map_err(BuildErr::DirErr)
-  }
+fn generate_directory(crate_name: &str) -> Result<TempDir, BuildErr> {
+  TempDir::new(crate_name).map_err(BuildErr::DirErr)
+}
 
-  fn generate_toml(directory: &TempDir, crate_name: &String, dependencies: HashMap<Dependency, Version>) -> Result<(), BuildErr> {
-    let deps: String = dependencies.iter()
-      .map(|(k, v)| format!("\"{}\" = \"{}\"\n", k, v))
-      .collect();
-    File::create(directory.path().join("Cargo.toml"))
-      .and_then(|mut f| f.write_all(format!("
-        [package]
-        name = \"{}\"
-        version = \"0.0.1\"
+fn generate_toml(directory: &TempDir, crate_name: &String, dependencies: HashMap<Dependency, Version>) -> Result<(), BuildErr> {
+  let deps: String = dependencies.iter()
+    .map(|(k, v)| format!("\"{}\" = \"{}\"\n", k, v))
+    .collect();
+  File::create(directory.path().join("Cargo.toml"))
+    .and_then(|mut f| f.write_all(format!("
+      [package]
+      name = \"{}\"
+      version = \"0.0.1\"
 
-        [dependencies]
-        {}
+      [dependencies]
+      {}
 
-        [lib]
-        crate-type = [\"cdylib\"]
-      ", crate_name, deps).as_bytes()))
-      .map_err(BuildErr::TomlErr)
-  }
+      [lib]
+      crate-type = [\"cdylib\"]
+    ", crate_name, deps).as_bytes()))
+    .map_err(BuildErr::TomlErr)
+}
 
-  fn generate_lib_rs(directory: &TempDir, source_code: String) -> Result<(), BuildErr> {
-    fs::create_dir(directory.path().join("src/"))
-      .and_then(|_| File::create(directory.path().join("src/lib.rs")))
-      .and_then(|mut f| f.write_all(source_code.as_bytes()))
-      .map_err(BuildErr::SrcErr)
-  }
+fn generate_lib_rs(directory: &TempDir, source_code: String) -> Result<(), BuildErr> {
+  fs::create_dir(directory.path().join("src/"))
+    .map_err(BuildErr::SrcErr)
+    .and_then(|_| write_lib_rs(directory, source_code))
+}
 
-  fn compile_crate(directory: &TempDir) -> Result<(), BuildErr> {
+fn write_lib_rs(directory: &TempDir, source_code: String) -> Result<(), BuildErr> {
+  File::create(directory.path().join("src/lib.rs"))
+    .and_then(|mut f| f.write_all(source_code.as_bytes()))
+    .map_err(BuildErr::SrcErr)
+}
+
+
+fn compile_crate(directory: &TempDir) -> Result<(), BuildErr> {
   Command::new("cargo")
     .arg("build")
     .current_dir(directory)
     .output()
     .map(|_| ())
     .map_err(BuildErr::CompileErr)
-  }
-```
-  And thats all there is to a `CrateBuilder`!
-```rust
 }
 ```
 
@@ -245,6 +257,31 @@ mod tests {
     cb.set_source_code("extern crate log;".to_owned());
     let krate = cb.build().unwrap();
     krate.as_live_dylib();
+  }
+
+  #[test]
+  fn can_rebuild_crate_with_new_source() {
+    let mut cb = CrateBuilder::new("test_crate_w_function".to_owned());
+    cb.set_source_code(r#"
+      #[no_mangle]
+      pub fn return_something() -> i32 { 3 }
+    "#.to_owned());
+    let krate = cb.build().unwrap();
+    {
+      let lib = krate.as_live_dylib();
+      let fun = unsafe { lib.get::<fn() -> i32>(b"return_something").unwrap() };
+      assert_eq!(fun(), 3);
+    }
+
+    let rekrate = krate.recompiled_with_source(r#"
+      #[no_mangle]
+      pub fn return_something() -> i32 { 4 }
+    "#.to_owned()).unwrap();
+    {
+      let lib = rekrate.as_live_dylib();
+      let fun = unsafe { lib.get::<fn() -> i32>(b"return_something").unwrap() };
+      assert_eq!(fun(), 4);
+    }
   }
 }
 ```

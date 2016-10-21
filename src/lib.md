@@ -9,6 +9,7 @@ It uses [Tango](https://github.com/pnkfelix/tango) to explore working with dylib
 To see it in action, pull down this crate, and run `cargo test`. That will load these markdown files up, convert them to `.rs` files, and execute the tests. Note: This crate does codegeneration and runtime compilation: you will need a modern (1.13, as of time of writing) rust installation, though if you're running `cargo test`, you're already there!
 
 ## First, our dependencies
+Starting with the stuff we're trying to test
 
 ### [Specs](https://github.com/slide-rs/specs)
 An entity component system
@@ -20,6 +21,13 @@ extern crate specs;
 A library for helping us load rust dylibs
 ```rust
 extern crate libloading;
+```
+
+And including some helpful libraries for writing our tests
+### [tempdir](https://github.com/rust-lang-nursery/tempdir)
+A library to help us generate temporary files and delete them when we're done (for use with codegen)
+```rust
+extern crate tempdir;
 ```
 
 ## Next, lets grab what we need

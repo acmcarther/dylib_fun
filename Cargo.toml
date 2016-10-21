@@ -11,6 +11,7 @@ tango = "0.5.0"
 [dependencies]
 specs = "0.7.0"
 libloading = "0.3.1"
+tempdir = "0.3.5"
 
 [lib]
 name = "dylib_fun"

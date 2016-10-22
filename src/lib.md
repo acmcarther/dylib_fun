@@ -41,19 +41,179 @@ use libloading::Library;
 
 ## Our supporting modules
 ### [Dylib codegen](./dylib_codegen.md)
+This is a module that facilitates generating and working with temporary dylib crates.
 ```rust
 mod dylib_codegen;
 ```
 
-## And the rest!
 
-Currently we do nothing. Heres a test block so something shows up on `cargo test`
 
+## Working with TypeId
 ```rust
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-    }
+mod typeid_tests {
+  use super::dylib_codegen::Crate;
+  use super::dylib_codegen::CrateBuilder;
+  use std::any::TypeId;
+  use libloading::Library;
+
+  fn get_type_results(first_source: String, second_source: String) -> (TypeId, TypeId) {
+    let mut cb = CrateBuilder::new("typeid_crate".to_owned());
+    cb.set_source_code(first_source);
+    let krate = cb.build().unwrap();
+    let original_typeid = {
+      let lib = krate.as_live_dylib();
+      let fun = unsafe { lib.get::<fn() -> TypeId>(b"mystruct_typeid").unwrap() };
+      fun()
+    };
+
+    let new_krate = krate.recompiled_with_source(second_source).unwrap();
+
+    let new_typeid = {
+      let new_lib = new_krate.as_live_dylib();
+      let new_fun = unsafe { new_lib.get::<fn() -> TypeId>(b"mystruct_typeid").unwrap() };
+      new_fun()
+    };
+
+    (original_typeid, new_typeid)
+  }
+
+  #[test]
+  fn unchanged_struct_typeid() {
+    let source_code = r#"
+      use std::any::TypeId;
+      pub struct MyStruct;
+
+      #[no_mangle]
+      pub fn mystruct_typeid() -> TypeId {
+        TypeId::of::<MyStruct>()
+      }
+    "#.to_owned();
+
+    let (original, new) = get_type_results(source_code.clone(), source_code);
+
+    assert_eq!(original, new);
+  }
+
+  #[test]
+  fn new_field_struct_id() {
+    let source_code = r#"
+      use std::any::TypeId;
+      pub struct MyStruct;
+
+      #[no_mangle]
+      pub fn mystruct_typeid() -> TypeId {
+        TypeId::of::<MyStruct>()
+      }
+    "#.to_owned();
+
+    let second_source_code = r#"
+      use std::any::TypeId;
+      pub struct MyStruct {
+        f: f32
+      }
+
+      #[no_mangle]
+      pub fn mystruct_typeid() -> TypeId {
+        TypeId::of::<MyStruct>()
+      }
+    "#.to_owned();
+
+
+    let (original, new) = get_type_results(source_code, second_source_code);
+
+    assert_eq!(original, new);
+  }
+
+  #[test]
+  fn new_struct_sanity_check() {
+    let source_code = r#"
+      use std::any::TypeId;
+      pub struct MyStruct;
+
+      #[no_mangle]
+      pub fn mystruct_typeid() -> TypeId {
+        TypeId::of::<MyStruct>()
+      }
+    "#.to_owned();
+
+    let second_source_code = r#"
+      use std::any::TypeId;
+      pub struct OtherStruct;
+
+      #[no_mangle]
+      pub fn mystruct_typeid() -> TypeId {
+        TypeId::of::<OtherStruct>()
+      }
+    "#.to_owned();
+
+
+    let (original, new) = get_type_results(source_code, second_source_code);
+
+    assert!(original != new);
+  }
+
+  #[test]
+  fn methods_do_not_impact_type_id() {
+    let source_code = r#"
+      use std::any::TypeId;
+      pub struct MyStruct;
+
+      #[no_mangle]
+      pub fn mystruct_typeid() -> TypeId {
+        TypeId::of::<MyStruct>()
+      }
+    "#.to_owned();
+
+    let second_source_code = r#"
+      use std::any::TypeId;
+      pub struct MyStruct;
+      impl MyStruct {
+        pub fn nothing(&self) {}
+      }
+
+      #[no_mangle]
+      pub fn mystruct_typeid() -> TypeId {
+        TypeId::of::<MyStruct>()
+      }
+    "#.to_owned();
+
+
+    let (original, new) = get_type_results(source_code, second_source_code);
+
+    assert_eq!(original, new);
+  }
+  #[test]
+  fn impld_traits_do_not_impact_the_id() {
+    let source_code = r#"
+      use std::any::TypeId;
+      pub struct MyStruct;
+
+      pub trait Frobnicate {}
+
+      #[no_mangle]
+      pub fn mystruct_typeid() -> TypeId {
+        TypeId::of::<MyStruct>()
+      }
+    "#.to_owned();
+
+    let second_source_code = r#"
+      use std::any::TypeId;
+      pub struct MyStruct;
+
+      pub trait Frobnicate {}
+      impl Frobnicate for MyStruct {}
+
+      #[no_mangle]
+      pub fn mystruct_typeid() -> TypeId {
+        TypeId::of::<MyStruct>()
+      }
+    "#.to_owned();
+
+
+    let (original, new) = get_type_results(source_code, second_source_code);
+
+    assert_eq!(original, new);
+  }
 }
 ```

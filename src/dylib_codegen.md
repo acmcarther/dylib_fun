@@ -200,7 +200,12 @@ fn compile_crate(directory: &TempDir) -> Result<(), BuildErr> {
     .arg("build")
     .current_dir(directory)
     .output()
-    .map(|_| ())
+    .map(|output| {
+      if !output.status.success() {
+        println!("output: {}", String::from_utf8(output.stdout).unwrap());
+        println!("output: {}", String::from_utf8(output.stderr).unwrap());
+      }
+    })
     .map_err(BuildErr::CompileErr)
 }
 ```

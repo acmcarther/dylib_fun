@@ -215,5 +215,57 @@ mod typeid_tests {
 
     assert_eq!(original, new);
   }
+  #[test]
+  fn can_access_prior_stored_data() {
+    use specs::World;
+    let source_code = r#"
+      extern crate specs;
+      use specs::World;
+
+      pub struct MyData {
+        pub f: f32
+      }
+
+      #[no_mangle]
+      pub fn do_work(world: &mut World) {
+        world.add_resource(MyData { f: 5.0 });
+      }
+    "#.to_owned();
+
+    let second_source_code = r#"
+      extern crate specs;
+      use specs::World;
+
+      pub struct MyData {
+        pub f: f32
+      }
+
+      #[no_mangle]
+      pub fn do_work(world: &mut World) {
+        world.write_resource::<MyData>();
+      }
+    "#.to_owned();
+
+    let mut cb = CrateBuilder::new("specs_data".to_owned());
+    cb.add_dependency("specs".to_owned(), "0.7.0".to_owned());
+    cb.set_source_code(source_code);
+    let krate = cb.build().unwrap();
+    let mut world = World::new();
+    {
+      let lib = krate.as_live_dylib();
+      let fun = unsafe { lib.get::<fn(&mut World)>(b"do_work").unwrap() };
+      fun(&mut world)
+    };
+
+    let new_krate = krate.recompiled_with_source(second_source_code).unwrap();
+
+    {
+      let new_lib = new_krate.as_live_dylib();
+      let new_fun = unsafe { new_lib.get::<fn(&mut World)>(b"do_work").unwrap() };
+      new_fun(&mut world)
+    };
+  }
+}
+```
 }
 ```

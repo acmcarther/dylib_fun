@@ -54,6 +54,11 @@ This is a module that facilitates generating and working with temporary dylib cr
 mod dylib_codegen;
 ```
 
+## A module with tests for game-like environments
+### [game_like](./game_like.md)
+```rust
+mod game_like;
+```
 
 
 ## Working with TypeId
@@ -63,7 +68,6 @@ mod typeid_tests {
   use super::dylib_codegen::Crate;
   use super::dylib_codegen::CrateBuilder;
   use std::any::TypeId;
-  use libloading::Library;
   use ::libc;
 
   fn get_type_results(first_source: String, second_source: String) -> (TypeId, TypeId) {
@@ -232,13 +236,13 @@ mod typeid_tests {
 
       #[repr(C)]
       struct Opaque {
-        num: i32
+        nums: Vec<i32>
       }
 
       #[no_mangle]
       pub fn gimme_opaque() -> *mut libc::c_void {
         Box::into_raw(Box::new(Opaque {
-          num: 11
+          nums: vec![11]
         })) as *mut libc::c_void
       }
     "#.to_owned();
@@ -248,7 +252,7 @@ mod typeid_tests {
 
       #[repr(C)]
       struct Opaque {
-        num: i32
+        nums: Vec<i32>
       }
 
       trait DoTrick {
@@ -257,7 +261,7 @@ mod typeid_tests {
 
       impl DoTrick for Opaque {
         fn do_trick(&self) -> i32 {
-          5 * self.num
+          5 * self.nums.get(0).unwrap()
         }
       }
 

@@ -23,6 +23,14 @@ A library for helping us load rust dylibs
 extern crate libloading;
 ```
 
+### [libc](https://github.com/rust-lang/libc)
+A library that gives us types for handling dangerous pointers
+```rust
+extern crate libc;
+```
+
+And including some helpful libraries for writing our tests
+
 And including some helpful libraries for writing our tests
 ### [tempdir](https://github.com/rust-lang-nursery/tempdir)
 A library to help us generate temporary files and delete them when we're done (for use with codegen)
@@ -56,6 +64,7 @@ mod typeid_tests {
   use super::dylib_codegen::CrateBuilder;
   use std::any::TypeId;
   use libloading::Library;
+  use ::libc;
 
   fn get_type_results(first_source: String, second_source: String) -> (TypeId, TypeId) {
     let mut cb = CrateBuilder::new("typeid_crate".to_owned());
@@ -215,57 +224,70 @@ mod typeid_tests {
 
     assert_eq!(original, new);
   }
+
   #[test]
-  fn can_access_prior_stored_data() {
-    use specs::World;
-    let source_code = r#"
-      extern crate specs;
-      use specs::World;
+  fn fun_with_opaque_pointers() {
+    let first_source = r#"
+      extern crate libc;
 
-      pub struct MyData {
-        pub f: f32
+      #[repr(C)]
+      struct Opaque {
+        num: i32
       }
 
       #[no_mangle]
-      pub fn do_work(world: &mut World) {
-        world.add_resource(MyData { f: 5.0 });
+      pub fn gimme_opaque() -> *mut libc::c_void {
+        Box::into_raw(Box::new(Opaque {
+          num: 11
+        })) as *mut libc::c_void
       }
     "#.to_owned();
 
-    let second_source_code = r#"
-      extern crate specs;
-      use specs::World;
+    let second_source = r#"
+      extern crate libc;
 
-      pub struct MyData {
-        pub f: f32
+      #[repr(C)]
+      struct Opaque {
+        num: i32
+      }
+
+      trait DoTrick {
+        fn do_trick(&self) -> i32;
+      }
+
+      impl DoTrick for Opaque {
+        fn do_trick(&self) -> i32 {
+          5 * self.num
+        }
       }
 
       #[no_mangle]
-      pub fn do_work(world: &mut World) {
-        world.write_resource::<MyData>();
+      pub fn handle_opaque(opaque: *mut libc::c_void) -> i32 {
+        let opaque: Box<Opaque> = unsafe { Box::from_raw(opaque as *mut Opaque) };
+
+        opaque.do_trick()
       }
     "#.to_owned();
-
-    let mut cb = CrateBuilder::new("specs_data".to_owned());
-    cb.add_dependency("specs".to_owned(), "0.7.0".to_owned());
-    cb.set_source_code(source_code);
+ 
+    let mut cb = CrateBuilder::new("test_crate".to_owned());
+    cb.set_source_code(first_source);
+    cb.add_dependency("libc".to_owned(), "0.2.20".to_owned());
     let krate = cb.build().unwrap();
-    let mut world = World::new();
-    {
+    let opaque: *mut libc::c_void = {
       let lib = krate.as_live_dylib();
-      let fun = unsafe { lib.get::<fn(&mut World)>(b"do_work").unwrap() };
-      fun(&mut world)
+      let fun = unsafe { lib.get::<fn() -> *mut libc::c_void>(b"gimme_opaque").unwrap() };
+      fun()
     };
 
-    let new_krate = krate.recompiled_with_source(second_source_code).unwrap();
+    let new_krate = krate.recompiled_with_source(second_source).unwrap();
 
-    {
+    let output = {
       let new_lib = new_krate.as_live_dylib();
-      let new_fun = unsafe { new_lib.get::<fn(&mut World)>(b"do_work").unwrap() };
-      new_fun(&mut world)
+      let new_fun = unsafe { new_lib.get::<fn(*mut libc::c_void) -> i32>(b"handle_opaque").unwrap() };
+      new_fun(opaque)
     };
+
+    assert_eq!(output, 55);
   }
-}
-```
 }
 ```

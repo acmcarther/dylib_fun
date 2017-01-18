@@ -9,6 +9,7 @@ build = "tango-build.rs"
 tango = "0.5.0"
 
 [dependencies]
+libc = "0.2.17"
 specs = "0.7.0"
 libloading = "0.3.1"
 tempdir = "0.3.5"

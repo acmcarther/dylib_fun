@@ -177,7 +177,7 @@ fn generate_toml(directory: &TempDir, crate_name: &String, dependencies: HashMap
       {}
 
       [lib]
-      crate-type = [\"cdylib\"]
+      crate-type = [\"dylib\"]
     ", crate_name, deps).as_bytes()))
     .map_err(BuildErr::TomlErr)
 }
